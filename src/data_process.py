@@ -1,5 +1,4 @@
-#!/usr/bin/python
-# -*- coding: <utf-8> -*-
+#%%
 import os
 import numpy as np
 import geopandas as gpd
@@ -17,9 +16,9 @@ warnings.filterwarnings('ignore')
 
 folder = '/home/pcl/Data/GBA/period3_4'
 
-path_set = PathSet(load=True)
+path_set = PathSet(load=True, cache_folder='../cache')
 
-
+#%%
 def process_path(fn, path_set, folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
     gdf = gpd.read_file( os.path.join(folder, fn), encoding='utf-8')
     df = pd.read_csv('/home/pcl/Data/GBA/period3_4/GBA_trajectory_info_200506.csv')
@@ -32,8 +31,7 @@ def process_path(fn, path_set, folder = '/home/pcl/Data/GBA/period3_4', save_fol
         val['index'] = idx
 
 
-    def apply_parallel(df, func):
-        n_jobs = 52
+    def apply_parallel(df, func, n_jobs = 52):
         df.loc[:,'group'] = df.index % n_jobs
         df = df.groupby('group')
         results = Parallel(n_jobs=n_jobs)(delayed(func)(group) for name, group in df)
@@ -79,3 +77,65 @@ if __name__ == '__main__':
     
             
     
+#%%
+# eda
+gdf = gpd.read_file("../db/gba_boundary.geojson")
+
+# %%
+folder = "../../"
+filter_str = '路径'
+driving_path_lst = [ i for i in os.listdir(folder) if filter_str in i ]
+
+def read_file(fn):
+    date_ = '20'+fn.split("_")[-1].split('.')[0]
+    df = pd.read_csv(fn)
+    df = df.rename(columns={'Unnamed: 0': 'index', 'tripID':'OD'}).set_index('index').sort_index()
+
+    df_origin = pd.read_csv(fn.replace('路径规划','trajectory_info'))
+    tmp = df.merge(df_origin, left_index=True, right_index=True)
+    assert (tmp['duration_x'] - tmp['duration_y']).sum() == 0  and \
+        (tmp.travelDis_x - tmp.travelDis_y).sum()==0, \
+            f"check the order of the driving direaction path in {fn}"
+
+    df = df.merge(df_origin[['tripID']], left_index=True, right_index=True)
+    df.loc[:, "time"] = df.tripID.apply(lambda x: pd.to_datetime(date_[:-2] + str(x)[:-3]) )
+
+    return df
+
+df_lst = []
+for fn in driving_path_lst:
+    df_lst.append(pd.read_csv(os.path.join(folder, fn)))
+
+df = pd.concat(df_lst)
+
+# %%
+fn = "../db/GBA_路径规划_200516.csv"
+
+read_file(fn)
+
+def apply_parallel(df, func, n_jobs = 12):
+    df.loc[:,'group'] = df.index % n_jobs
+    df = df.groupby('group')
+    results = Parallel(n_jobs=n_jobs)(delayed(func)(group) for name, group in df)
+    print("Done!")
+    return pd.concat(results)
+
+
+def helper()
+
+# %%
+# congestion index
+speed = df.groupby('t')['speed'].mean()
+speed = speed.max()/speed
+sns.lineplot( data=speed )
+# %%
+period_bins = ['20190302 1200', '20190402 1200', '20200505 1400', '20200515 0900', '20210515 0900']
+period_bins = [ pd.to_datetime(x) for x in period_bins]
+period_labels = [f'Period {i+1}' for i in range(len(period_bins)-1)]
+
+period_bins
+# %%
+df.loc[:, 'period'] = pd.cut(df.t, period_bins, labels=period_labels)
+# %%
+df
+# %%

@@ -38,4 +38,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - build the project
 - `PathSet` Class: To store the path between cities. 
-- 预处理数据
+- 预处理数据（path, steps）
