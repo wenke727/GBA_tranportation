@@ -7,9 +7,9 @@ __pycache__/
 *.so
 
 # Distribution / packaging
-nohup.out
-cache/
-sumo/osm/
+.bak
+cache
+tmp
 log/
 .Python
 build/

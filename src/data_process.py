@@ -2,140 +2,384 @@
 import os
 import numpy as np
 import geopandas as gpd
+from numpy.lib.arraysetops import unique
 import pandas as pd
 import seaborn as sns
 import pickle
 from tqdm import tqdm 
 from utils.classes import PathSet
 import threading
+import time
 from joblib import Parallel,delayed
 from shapely.geometry import LineString
+from utils.tools import reduce_mem_usage
 
 import warnings
 warnings.filterwarnings('ignore')
 
 folder = '/home/pcl/Data/GBA/period3_4'
 
-path_set = PathSet(load=True, cache_folder='../cache')
+pd.set_option("display.max_rows", 100)
+
+# path_set = PathSet(load=True, cache_folder='../cache')
+# path_set_tmcs = PathSet(load=True, cache_folder='../cache', file_name='path_set_tmcs_tmcs')
+# path_set_step = PathSet(load=True, cache_folder='../cache', file_name='path_set_step')
 
 #%%
 def process_path(fn, path_set, folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
     gdf = gpd.read_file( os.path.join(folder, fn), encoding='utf-8')
-    df = pd.read_csv('/home/pcl/Data/GBA/period3_4/GBA_trajectory_info_200506.csv')
 
-    shapes_lst = list(gdf.geometry.unique())
-    shapes_dict = { idx: {'coords': str(i.coords[:])} for idx, i in enumerate(shapes_lst)}
-    for key, val in tqdm(shapes_dict.items(), "add to path_set"):
-        # print(key, val.keys())
-        idx = path_set.add(val['coords'])
-        val['index'] = idx
+    gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: np.round(x.coords[:], 6).tolist())
+    gdf.loc[:, 'geometry'] = gdf.path.apply( lambda x: LineString(x))
+    gdf.path = gdf.path.astype(str)
 
+    unique_geoms = gdf.geometry.unique()
+    path_set.addSet_df(unique_geoms)
+    path_set.save()
 
-    def apply_parallel(df, func, n_jobs = 52):
-        df.loc[:,'group'] = df.index % n_jobs
-        df = df.groupby('group')
-        results = Parallel(n_jobs=n_jobs)(delayed(func)(group) for name, group in df)
-        print("Done!")
-        return pd.concat(results)
+    gdf = gdf.merge(path_set.convert_to_gdf(), on='path')
+    gdf.drop(columns=['geometry', 'path', 'shape'], inplace=True)
+    
+    # shapes_lst = list(unique_geoms)
+    # shapes_dict = { idx: {'coords': str(i.coords[:])} for idx, i in enumerate(shapes_lst)}
+    # for key, val in tqdm(shapes_dict.items(), "add to path_set"):
+    #     # print(key, val.keys())
+    #     # idx = path_set.add(val['coords'])
+    #     val['index'] = path_set.get_key(val['coords'])
+    
+    # def apply_parallel(df, func, n_jobs = 16):
+    #     df.loc[:,'group'] = df.index % n_jobs
+    #     df = df.groupby('group')
+    #     results = Parallel(n_jobs=n_jobs)(delayed(func)(group) for name, group in df)
+    #     print("Done!")
+    #     return pd.concat(results)
 
+    # def helper(gdf):
+    #     # gdf.loc[:,'ids'] = gdf.geometry.apply( lambda x:  shapes_dict[shapes_lst.index(x)]['index'] )
+    #     gdf.loc[:,'ids'] = gdf.geometry.apply( lambda x:  path_set.get_key(str(x.coords[:])) )
 
-    def helper(gdf):
-        gdf.loc[:,'ids'] = gdf.geometry.apply( lambda x:  shapes_dict[shapes_lst.index(x)]['index'] )
+    #     return gdf
 
-        return gdf
-
-    print('apply_parallel')
-    gdf = apply_parallel(gdf, helper)
-    gdf.drop(columns=['geometry', 'group'], inplace=True)
-
+    # print('apply_parallel')
+    # gdf = apply_parallel(gdf, helper)
+    
+    # gdf.loc[:,'ids'] = gdf.geometry.apply( lambda x:  path_set.get_key(str(x.coords[:])) )
+    # gdf.drop(columns=['geometry', 'group'], inplace=True)
+    gdf.sort_index(inplace=True)
+    
     save_fn = os.path.join(save_folder, fn.replace('.shp', '.csv'))
     gdf.to_csv( save_fn, encoding='utf-8' )
 
     return gdf
 
-
-def process_path_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
+def process_path_batch(path_set_path, folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
+    # path_set = path_set_path
     
-    error_lst = []
+    fn_lst, error_lst = [], []
     for fn in tqdm(os.listdir(folder)):
         if '路径规划_' not in fn or 'shp' not in fn:
             continue
-        print(fn)
-        
+        fn_lst.append(fn)
+    fn_lst.sort()
+    fn = fn_lst[0]
+    
+    for fn in fn_lst:
         try:
-            df = process_path(fn, path_set, folder, save_folder)
+            print(f"{time.asctime( time.localtime(time.time()) )}, {fn}")
+            df = process_path(fn, path_set_path, folder, save_folder)
         except:
             error_lst.append(fn)
 
     return error_lst
 
-if __name__ == '__main__':
-    error_lst = process_path_batch()
-    path_set.save()
-    print(error_lst)
-    print(f"path_set size: {path_set.size}")
-    
-            
-    
-#%%
-# eda
-gdf = gpd.read_file("../db/gba_boundary.geojson")
+def process_steps_old(step_file, path_set, folder=folder):
+    df_step = gpd.read_file(os.path.join(folder, step_file), encoding='utf-8')
+    df_step.loc[:, 'day']     = df_step.ID.apply( lambda x: x [:2])
+    df_step.loc[:, 'time']    = df_step.ID.apply( lambda x: x [2:6])
+    df_step.loc[:, 'step_id'] = df_step.ID.apply( lambda x: x [6:]).astype(int) - df_step.tripID.astype(int)*100
+    df_step.loc[:, 'path']    = df_step.geometry.apply(lambda x: str(x.coords[:]))
+    # df_step.step_id.value_counts().sort_index()
 
-# %%
-folder = "../../"
-filter_str = '路径'
-driving_path_lst = [ i for i in os.listdir(folder) if filter_str in i ]
+    path_set.addSet(df_step['path'].unique())
+    df_step.loc[:, 'path_id'] = df_step['path'].apply( lambda x: path_set.get_key(x) )
 
-def read_file(fn):
+    df_step.drop(columns=['geometry', 'path'], inplace=True)
+    df_step.loc[:, 'speed'] = df_step['distance'] / df_step['duration'] * 3.6
+    # sns.kdeplot(df_step.sample(10**3).loc[:, 'speed'])
+    
+    return df_step
+
+def process_steps(fn, save_folder='/home/pcl/Data/GBA/steps', verbose=True):
+    gdf = gpd.read_file(fn, encoding='utf-8')
+    df  = pd.read_csv(fn.replace('shp', 'csv'), encoding='utf-8')
+
+    gdf.rename(columns={'tripID': 'OD'}, inplace=True)
+    atts = ['OD', 'distance', 'duration', 'tolls']
+    gdf[atts] = gdf[atts].astype(int)
+    reduce_mem_usage(gdf, True)
+    reduce_mem_usage(df, True)
+
+    # check the data is the same or not
+    atts = ['distance', 'duration']
+    assert df.shape[0] == gdf.shape[0], "check"
+    assert sum([(df[i] - gdf[i]).sum() for i in atts]) == 0, "check"
+
+    gdf = gdf[['ID', 'OD', 'geometry']].merge(df, left_index=True, right_index=True)
+    gdf.loc[:, 'step_id'] = gdf.tripID.apply(lambda x: x.split("_")[-1]).astype(int)
+
+    path_set_step.addSet_df(gdf['geometry'].unique())
+
+    gdf.loc[:, 'fid'] = gdf['geometry'].apply( lambda x: path_set_step.get_key(str(x.coords[:])) )
+
     date_ = '20'+fn.split("_")[-1].split('.')[0]
+    gdf.loc[:, 'date'] = int(date_)
+    
+    def cal_time(x):
+        offset = 2 if str(x.date)[-2:] == x.ID[:2] else 1
+        t = x.ID[offset: offset+4]
+        t = int(t)//100 + int(str(t)[-2:])/60
+        return t 
+    
+    gdf.loc[:, 't'] = gdf.apply(cal_time, axis=1)
+
+    drop_atts = ['tripID', 'geometry']
+    gdf.drop(columns=drop_atts, inplace=True)
+    gdf.rename(columns={'ID': 'tripID'}, inplace=True)
+
+    atts_order = [ 'OD', 'step_id', 'tripID', 'instruction', 'orientation', 'road', 'distance', 'tolls', 'toll_distance', 'toll_road', 'duration', 'action',  'assistant_action', 'fid', 'date', 't']
+    gdf = gdf[atts_order]
+
+    if save_folder is not None:
+        to_fn = os.path.join(save_folder, fn.split('/')[-1].replace('.shp', '.h5') )
+        pd.DataFrame(gdf).to_hdf(to_fn, 'steps')
+
+    return gdf
+
+def process_steps_ver_for_period_1_2(fn, save_folder='/home/pcl/Data/GBA/steps', verbose=True):
     df = pd.read_csv(fn)
-    df = df.rename(columns={'Unnamed: 0': 'index', 'tripID':'OD'}).set_index('index').sort_index()
+    date_ = '20'+fn.split("_")[-1].split('.')[0]
 
-    df_origin = pd.read_csv(fn.replace('路径规划','trajectory_info'))
-    tmp = df.merge(df_origin, left_index=True, right_index=True)
-    assert (tmp['duration_x'] - tmp['duration_y']).sum() == 0  and \
-        (tmp.travelDis_x - tmp.travelDis_y).sum()==0, \
-            f"check the order of the driving direaction path in {fn}"
+    df.loc[:, "OD"] = df.tripID.apply( lambda x: x % 1000 )
+    df.loc[:, "date"] = int(date_)
 
-    df = df.merge(df_origin[['tripID']], left_index=True, right_index=True)
-    df.loc[:, "time"] = df.tripID.apply(lambda x: pd.to_datetime(date_[:-2] + str(x)[:-3]) )
+    def cal_time(x):
+        offset = 2 if str(x.date)[-2:] == str(x.tripID)[:2] else 1
+        t = str(x.tripID)[offset: offset+4]
+        t = int(t)//100 + int(str(t)[-2:])/60
+        return t 
+
+    df.loc[:, 't'] = df.apply(cal_time, axis=1)
+
+    df_start_step = df.reset_index().groupby(['OD', 't'])[['index']].min().reset_index().rename(columns={'index': 'start_step_index'})
+
+    df = df.merge( df_start_step, on = ['OD', 't'])
+    df.loc[:,'step_id'] = df.index - df.start_step_index
+    df.drop(columns='start_step_index', inplace=True)
+
+    df.loc[:, 'fid'] = None
+    atts_order = [ 'OD', 'step_id', 'tripID', 'instruction', 'orientation', 'road', 'distance', 'tolls', 'toll_distance', 'toll_road', 'duration', 'action',  'assistant_action', 'fid', 'date', 't']
+    df = df[atts_order]
+    
+    if save_folder is not None:
+        to_fn = os.path.join(save_folder, fn.split('/')[-1].replace('.csv', '.h5') )
+        df.to_hdf(to_fn, 'steps')
 
     return df
 
-df_lst = []
-for fn in driving_path_lst:
-    df_lst.append(pd.read_csv(os.path.join(folder, fn)))
+def process_steps_start():
+    folder = '/home/pcl/Data/GBA/period3_4'
+    fn_lst = []
+    for f in os.listdir(folder):
+        if 'shp' in f and 'step' in f:
+            fn_lst.append(os.path.join(folder, f))
+    fn_lst.sort()
 
-df = pd.concat(df_lst)
+    for i in tqdm(fn_lst):
+        process_steps(i)
+
+    folder = "/home/pcl/Data/GBA/1904/"
+    fn_lst = []
+    for f in os.listdir(folder):
+        if 'csv' in f and 'step' in f:
+            fn_lst.append(os.path.join(folder, f))
+    fn_lst.sort()
+
+    for i in tqdm(fn_lst):
+        df = process_steps_ver_for_period_1_2(i)
+
+def process_steps_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
+    error_lst = []
+    for fn in tqdm(os.listdir(folder)):
+        if 'step_' not in fn or 'shp' not in fn:
+            continue 
+
+        save_fn = os.path.join(save_folder, fn.replace('.shp', '.csv'))
+
+        if os.path.exists(save_fn):
+            continue
+
+        print("path_set.num: ", path_set.num)
+        
+        try:
+            df = process_steps(fn, path_set, folder)
+            pd.DataFrame(df).to_csv(save_fn, encoding='utf-8')
+        except:
+            error_lst.append(fn)
+    
+    return error_lst
+
+def process_tmcs(fn, path_set_tmcs, folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps', test=False):
+    if test:
+        gdf = gpd.read_file( os.path.join(folder, fn), encoding='utf-8', rows=2000)
+    else:
+        gdf = gpd.read_file( os.path.join(folder, fn), encoding='utf-8')
+
+    for att in ['lineID', 'tripID', 'distance', 'status']:
+        gdf[att] = gdf[att].astype(int)
+    gdf = reduce_mem_usage(gdf)
+
+    # shapes_lst = list(gdf.geometry.unique())
+    # shapes_dict = { idx: {'coords': str(i.coords[:])} for idx, i in enumerate(shapes_lst)}
+    # for key, val in tqdm(shapes_dict.items(), "add to path_set_tmcs"):
+    #     idx = path_set_tmcs.add(val['coords'])
+    #     val['index'] = idx
+    path_set_tmcs.addSet_df(gdf.geometry.unique(), verbose=False)
+
+    ids = gdf.geometry.apply( lambda x: path_set_tmcs.get_key(str(x.coords[:])) )
+
+    gdf.drop(columns=['geometry'], inplace=True)
+    gdf.loc[:, 'path_id'] = ids
+    reduce_mem_usage(gdf)
+    
+    # save_fn = os.path.join(save_folder, fn.replace('.shp', '.csv'))
+    # gdf.to_csv( save_fn, encoding='utf-8' )
+    h5 = pd.HDFStore(os.path.join(folder, fn.replace('.csv', '.h5')),'w', complevel=4, complib='blosc')
+    h5[fn.split(".")[0]] = df
+    h5.close()
+
+    return gdf
+
+def process_tmcs_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps', test=False ):
+    fn_lst, error_lst = [], []
+    for i in os.listdir(folder):
+        if 'tmcs' in i and 'shp' in i:
+            fn_lst.append(i)
+    fn_lst.sort()
+
+    for fn in fn_lst:
+        try:
+            localtime = time.asctime( time.localtime(time.time()) )
+            print(f"{fn}, path_set_tmcs size: {path_set_tmcs.size}, start at {localtime}")
+            process_tmcs(fn, path_set_tmcs, folder, save_folder, test=test)
+        except:
+            error_lst.append(fn)
+
+    path_set_tmcs.save()
+    print("error list: ", error_lst)
+    
+    return 
+
+
+#%%
+if __name__ == '__main__':
+    # for path_analysis
+    path_set_path = PathSet(load=False, cache_folder='../cache', file_name='path_set_path')
+    process_path_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps', path_set_path=path_set_path)
+    process_path_batch(folder = '/home/pcl/Data/GBA/period1_2', save_folder='/home/pcl/Data/GBA/steps', path_set_path=path_set_path)
+    
+    # process_steps_start()
+    # error_lst = process_path_batch()
+    # path_set.save()
+    # print(error_lst)
+    # print(f"path_set size: {path_set.size}")
+    
+    # process_steps_batch()
+    
+    
+    # process_tmcs_batch()
+    
+    # folder = '/home/pcl/Data/GBA/steps'
+    # fn_lst = []
+    # for fn in os.listdir(folder):
+    #     if 'step' in fn and 'csv' in fn:
+    #         fn_lst.append(fn)
+    # fn_lst.sort()
+
+
+    # fn = fn_lst[0]
+    # df_lst = []
+    # for fn in fn_lst:
+    #     print(fn)
+    #     df = pd.read_csv(os.path.join(folder, fn))
+    #     df.drop(columns='Unnamed: 0', inplace=True)
+    #     reduce_mem_usage(df, True)
+
+    #     h5 = pd.HDFStore(os.path.join(folder, fn.replace('.csv', '.h5')),'w', complevel=4, complib='blosc')
+    #     h5[fn.split(".")[0]] = df
+    #     h5.close()
+
+
+
+
+#%%
+
+# import modin.pandas as mpd
+# mdf = mpd.DataFrame(gdf)
+# #%%
+# start=time.time()
+# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# mdf.loc[:, 'path'] = mdf.geometry.apply( lambda x: str(x.coords[:]) )
+# end=time.time()
+# print('modin using ' + str(end-start)+' time')
+
+# # %%
+# start=time.time()
+# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: str(x.coords[:]) )
+# end=time.time()
+# print('modin using ' + str(end-start)+' time')
+
+# # %%
+# gdf_path_set = gpd.GeoDataFrame(path_set.key_to_elem).T
+# gdf_path_set.set_geometry("shape", inplace=True)
+# gdf_path_set.loc[:, 'fid'] = gdf_path_set.index
+
+# #%%
+
+# start=time.time()
+# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# mdf = mdf.merge(mpd.DataFrame(gdf_path_set), left_on='geom_str', right_on='path')
+# end=time.time()
+# print('modin using ' + str(end-start)+' time')
+
+# # %%
+
+# start=time.time()
+# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# gdf.merge(gdf_path_set, on='path')
+
+# print('modin using ' + str(end-start)+' time')
+
+# # %%
+
+
+# # %%
+# start=time.time()
+# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# end=time.time()
+# print('modin using ' + str(end-start)+' time')
+
+
+# start=time.time()
+# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
+# gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: str(x.coords[:]) )
+# gdf.merge(path_set.convert_to_gdf(), on='path')
+# end=time.time()
+# print('modin using ' + str(end-start)+' time')
+
 
 # %%
-fn = "../db/GBA_路径规划_200516.csv"
-
-read_file(fn)
-
-def apply_parallel(df, func, n_jobs = 12):
-    df.loc[:,'group'] = df.index % n_jobs
-    df = df.groupby('group')
-    results = Parallel(n_jobs=n_jobs)(delayed(func)(group) for name, group in df)
-    print("Done!")
-    return pd.concat(results)
 
 
-def helper()
-
-# %%
-# congestion index
-speed = df.groupby('t')['speed'].mean()
-speed = speed.max()/speed
-sns.lineplot( data=speed )
-# %%
-period_bins = ['20190302 1200', '20190402 1200', '20200505 1400', '20200515 0900', '20210515 0900']
-period_bins = [ pd.to_datetime(x) for x in period_bins]
-period_labels = [f'Period {i+1}' for i in range(len(period_bins)-1)]
-
-period_bins
-# %%
-df.loc[:, 'period'] = pd.cut(df.t, period_bins, labels=period_labels)
-# %%
-df
 # %%
