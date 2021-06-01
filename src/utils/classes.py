@@ -3,9 +3,9 @@ import os
 import pickle
 import pyproj
 import numpy as np
-from shapely.geometry import Point
+from shapely.geometry import Point, LineString
 from shapely.ops import transform
-from shapely.geometry import LineString
+from shapely import wkt
 import geopandas as gpd
 
 class PathSet():
@@ -32,9 +32,9 @@ class PathSet():
             return self.path_to_key[item]
         
         self.path_to_key[item] = self.num
-        shape = LineString( eval(item) )
-        self.key_to_elem[self.num] = {'path': item, 
-                                      'shape': shape,
+        shape = wkt.loads(item)
+        self.key_to_elem[self.num] = {'_wkt': item, 
+                                      'geometry': shape,
                                       'length': self.cal_distance(shape)
                                       }
         self.num += 1
@@ -51,25 +51,26 @@ class PathSet():
     def addSet_df(self, lst, verbose=False):
         import geopandas as gpd
         paths = gpd.GeoDataFrame(geometry = lst)
+        
         paths.drop_duplicates(inplace=True)
         paths.set_crs(epsg = self.in_epsg, inplace=True)
-        paths.loc[:, 'path']   = paths.geometry.apply( lambda x: str(np.round(x.coords[:], 6).tolist()) )
+        paths.loc[:, '_wkt']   = paths.geometry.apply( lambda x: x.wkt )
         paths.loc[:, 'length'] = paths.to_crs(epsg=self.out_epsg).length
-        paths.rename(columns={'geometry': 'shape'}, inplace=True)
+        paths.rename(columns={'geometry': 'geometry'}, inplace=True)
         paths_dict = paths.to_dict(orient='records')
 
         res = {}
         for item in paths_dict:
-            if item['path'] in self.path_to_key:
-                res[item['path']] = self.path_to_key[item['path']]
+            if item['_wkt'] in self.path_to_key:
+                res[item['_wkt']] = self.path_to_key[item['_wkt']]
                 continue
             
-            self.path_to_key[item['path']] = self.num
+            self.path_to_key[item['_wkt']] = self.num
             self.key_to_elem[self.num] = item.copy()
             self.num += 1
             if verbose:
-                print(f"add {item['path']} to db")
-            res[item['path']] = self.path_to_key[item['path']]
+                print(f"add {item['_wkt']} to db")
+            res[item['_wkt']] = self.path_to_key[item['_wkt']]
         
         return res
     
@@ -89,18 +90,17 @@ class PathSet():
         if index not in self.key_to_elem:
             return None
 
-        return self.key_to_elem[index]['shape']
+        return self.key_to_elem[index]['geometry']
 
     def get_shapes(self, fids):
         shapes = []
         for i in fids:
             shapes.append(self.key_to_elem[i])
 
-        return gpd.GeoDataFrame(shapes).set_geometry('shape')
+        return gpd.GeoDataFrame(shapes).set_geometry('geometry')
 
     def convert_to_gdf(self):
         gdf = gpd.GeoDataFrame(self.key_to_elem).T
-        gdf.set_geometry("shape", inplace=True)
         gdf.set_crs(epsg=self.in_epsg, inplace=True)
         gdf.loc[:, 'fid'] = gdf.index
         

@@ -72,6 +72,7 @@ def process_path(fn, path_set, folder = '/home/pcl/Data/GBA/period3_4', save_fol
 
     return gdf
 
+
 def process_path_batch(path_set_path, folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
     # path_set = path_set_path
     
@@ -92,6 +93,7 @@ def process_path_batch(path_set_path, folder = '/home/pcl/Data/GBA/period3_4', s
 
     return error_lst
 
+
 def process_steps_old(step_file, path_set, folder=folder):
     df_step = gpd.read_file(os.path.join(folder, step_file), encoding='utf-8')
     df_step.loc[:, 'day']     = df_step.ID.apply( lambda x: x [:2])
@@ -108,6 +110,7 @@ def process_steps_old(step_file, path_set, folder=folder):
     # sns.kdeplot(df_step.sample(10**3).loc[:, 'speed'])
     
     return df_step
+
 
 def process_steps(fn, save_folder='/home/pcl/Data/GBA/steps', verbose=True):
     gdf = gpd.read_file(fn, encoding='utf-8')
@@ -155,6 +158,7 @@ def process_steps(fn, save_folder='/home/pcl/Data/GBA/steps', verbose=True):
 
     return gdf
 
+
 def process_steps_ver_for_period_1_2(fn, save_folder='/home/pcl/Data/GBA/steps', verbose=True):
     df = pd.read_csv(fn)
     date_ = '20'+fn.split("_")[-1].split('.')[0]
@@ -186,6 +190,7 @@ def process_steps_ver_for_period_1_2(fn, save_folder='/home/pcl/Data/GBA/steps',
 
     return df
 
+
 def process_steps_start():
     folder = '/home/pcl/Data/GBA/period3_4'
     fn_lst = []
@@ -207,6 +212,7 @@ def process_steps_start():
     for i in tqdm(fn_lst):
         df = process_steps_ver_for_period_1_2(i)
 
+
 def process_steps_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps'):
     error_lst = []
     for fn in tqdm(os.listdir(folder)):
@@ -227,6 +233,7 @@ def process_steps_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/h
             error_lst.append(fn)
     
     return error_lst
+
 
 def process_tmcs(fn, path_set_tmcs, folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps', test=False):
     if test:
@@ -259,6 +266,7 @@ def process_tmcs(fn, path_set_tmcs, folder = '/home/pcl/Data/GBA/period3_4', sav
 
     return gdf
 
+
 def process_tmcs_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps', test=False ):
     fn_lst, error_lst = [], []
     for i in os.listdir(folder):
@@ -287,99 +295,3 @@ if __name__ == '__main__':
     process_path_batch(folder = '/home/pcl/Data/GBA/period3_4', save_folder='/home/pcl/Data/GBA/steps', path_set_path=path_set_path)
     process_path_batch(folder = '/home/pcl/Data/GBA/period1_2', save_folder='/home/pcl/Data/GBA/steps', path_set_path=path_set_path)
     
-    # process_steps_start()
-    # error_lst = process_path_batch()
-    # path_set.save()
-    # print(error_lst)
-    # print(f"path_set size: {path_set.size}")
-    
-    # process_steps_batch()
-    
-    
-    # process_tmcs_batch()
-    
-    # folder = '/home/pcl/Data/GBA/steps'
-    # fn_lst = []
-    # for fn in os.listdir(folder):
-    #     if 'step' in fn and 'csv' in fn:
-    #         fn_lst.append(fn)
-    # fn_lst.sort()
-
-
-    # fn = fn_lst[0]
-    # df_lst = []
-    # for fn in fn_lst:
-    #     print(fn)
-    #     df = pd.read_csv(os.path.join(folder, fn))
-    #     df.drop(columns='Unnamed: 0', inplace=True)
-    #     reduce_mem_usage(df, True)
-
-    #     h5 = pd.HDFStore(os.path.join(folder, fn.replace('.csv', '.h5')),'w', complevel=4, complib='blosc')
-    #     h5[fn.split(".")[0]] = df
-    #     h5.close()
-
-
-
-
-#%%
-
-# import modin.pandas as mpd
-# mdf = mpd.DataFrame(gdf)
-# #%%
-# start=time.time()
-# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# mdf.loc[:, 'path'] = mdf.geometry.apply( lambda x: str(x.coords[:]) )
-# end=time.time()
-# print('modin using ' + str(end-start)+' time')
-
-# # %%
-# start=time.time()
-# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: str(x.coords[:]) )
-# end=time.time()
-# print('modin using ' + str(end-start)+' time')
-
-# # %%
-# gdf_path_set = gpd.GeoDataFrame(path_set.key_to_elem).T
-# gdf_path_set.set_geometry("shape", inplace=True)
-# gdf_path_set.loc[:, 'fid'] = gdf_path_set.index
-
-# #%%
-
-# start=time.time()
-# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# mdf = mdf.merge(mpd.DataFrame(gdf_path_set), left_on='geom_str', right_on='path')
-# end=time.time()
-# print('modin using ' + str(end-start)+' time')
-
-# # %%
-
-# start=time.time()
-# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# gdf.merge(gdf_path_set, on='path')
-
-# print('modin using ' + str(end-start)+' time')
-
-# # %%
-
-
-# # %%
-# start=time.time()
-# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# end=time.time()
-# print('modin using ' + str(end-start)+' time')
-
-
-# start=time.time()
-# # mdf.geometry.apply( lambda x: path_set.get_key(str(x.coords[:])) )
-# gdf.loc[:, 'path'] = gdf.geometry.apply( lambda x: str(x.coords[:]) )
-# gdf.merge(path_set.convert_to_gdf(), on='path')
-# end=time.time()
-# print('modin using ' + str(end-start)+' time')
-
-
-# %%
-
-
-# %%

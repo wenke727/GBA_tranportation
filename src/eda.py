@@ -1,53 +1,34 @@
 #%%
+import imp
 import os
 import math
-from threading import Condition
-from numpy.lib.function_base import copy
+import pickle
 import pandas as pd
 import geopandas as gpd
+from tqdm import tqdm
 import seaborn as sns
 import matplotlib.pyplot as plt
 import numpy as np
-from tqdm import tqdm
+
+from spark_helper import sc
+
+from shapely import wkt
+from shapely.geometry import LineString, box
 from utils.tools import reduce_mem_usage
 from utils.classes import PathSet
 import warnings
 
+from df_helper import df_query, df_query_by_od, add_od, period_split, add_congestion_index, get_trip_related_to_bridges, df_pipline, get_pois
+from plot_helper import draw_subplot, gba_plot, add_od, plt_2_Image, draw_subplot_travel_path
+
 warnings.filterwarnings('ignore')
 
 pd.set_option("display.max_rows", 100)
-    
-#%%
-"""
-TripID:
-    * path: 
-        [:-3],      date
-        [-7:-3],    time
-        [-3:],      od
-"""
 
-"""global parameters"""
-df = pd.read_hdf('/home/pcl/Data/GBA/gba_db.h5')
-path_set = PathSet(load=True, cache_folder='../cache', file_name='path_features')
-
-gba_area = gpd.read_file("../db/gba_boundary.geojson")
-bridges = gpd.read_file("../db/bridges.geojson")
-gdf_paths = path_set.convert_to_gdf()
-gdf_paths = gpd.sjoin(left_df=gdf_paths, right_df=bridges[['bridge', 'geometry']], op='intersects', how='left') 
-
-cities_lst = ["Hong Kong","Macao","Guangzhou","Shenzhen","Zhuhai","Foshan","Huizhou","Dongguan","Zhongshan","Jiangmen","Zhaoqing"]
+RESULT_FOLDER = "../result"
 
 #%%
 """tool functions"""
-def period_split(df):
-    # 区间左闭右开
-    period_bins = ['20190302 1200', '20190402 1150', '20200505 1350', '20200515 0850', '20211230 0900']
-    period_bins = [ pd.to_datetime(x) for x in period_bins]
-    period_labels = [ i+1 for i in range(len(period_bins)-1)]
-    df.loc[:, 'period'] = pd.cut(df.time, period_bins, labels=period_labels)
-    
-    return df
-
 def outlier_filter(df, group_cols = ['OD', 'date'], col='speed', mul_factor=3):
     df_groups = df.groupby(group_cols)
 
@@ -65,339 +46,392 @@ def outlier_filter(df, group_cols = ['OD', 'date'], col='speed', mul_factor=3):
     
     return df_, df_outliers
 
-def add_df_info(df):
-    pois = pd.read_excel("../db/cities_poi.xlsx",'poi').rename(columns={'id': 'OD'})
-    reduce_mem_usage(pois)
-    df = df.merge( pois[['OD', 'o', 'd']], on="OD")
-    df.speed = df.speed.astype(np.float32)
 
-    cities_order = ["Hong Kong","Macao","Guangzhou","Shenzhen","Zhuhai","Foshan","Huizhou","Dongguan","Zhongshan","Jiangmen","Zhaoqing"]
-    for i in ["o", 'd']:
-        df[i] = df[i].astype("category")
-        df[i].cat.set_categories(cities_order, inplace=True)
-        
-    df.loc[:, 'dayofweek'] = df.time.dt.dayofweek
-    holidays = ['20190404', '20190405'] # 特殊节假日
-    df.loc[:, 'holiday'] = False
-    df.loc[df.query(f"date in {holidays} ").index, 'holiday'] = True
-    # df[df.period==2].groupby(['period','weekday','date'])['OD'].count()
+""" visualization"""
+
+def plot_circuity_factor_under_4_period(df, test = False, fn ='../result/4个时期的距离线型图.pdf'):
+    # 绕行系数
+    pois = get_pois()
     
-    return df
-
-def plot_trip(o='Shenzhen', d = 'Zhuhai', gdf_paths=gdf_paths):
-    pids = paths.query(f" o == '{o}' and d == '{d}' ").fid_lst.values[0]
-    pids = np.delete(pids, list(pids).index(-1))
-
-    ax = gba_area.plot(figsize=(12,8))
-    gdf_paths.loc[pids].plot(ax=ax, color='r')
-    ax.set_title( f"{o} -> {d}" )
-    
-    return 
-
-
-#%%
-df = add_df_info(df)
-df, df_outliers = outlier_filter(df, group_cols = ['OD', 'date'])
-df_equal_weight = df.groupby(['o', 'd', 'time']).mean().dropna().reset_index()
-print( f"df_equal_weight size shrink {df.shape[0]}->{df_equal_weight.shape[0]}, cut down {(1-df_equal_weight.shape[0]/df.shape[0])*100:.2f}%" )
-
-df_equal_weight = period_split(df_equal_weight)
-df = period_split(df)
-
-df = df.merge( gdf_paths[['fid', 'shape', 'bridge']], on='fid', how='left')
-
-# 增加拥堵系数
-df = df.merge(df.groupby(['OD'])[['speed']].max().rename(columns={'speed': 'speed_max'}), on = "OD")
-df.loc[:, 'ci'] = df.speed_max / df.speed
-
-df.loc[:, 'holiday/weekend'] = (df.holiday) | (df.dayofweek >= 5)
-
-#%%
-# 仅仅是速度分布曲线，看不出什么来
-for i in range(1,5,1):
-    sns.kdeplot(df.query(f"period == {i}").speed, label = i)
-
-#%%
-# 
-"""
-The curves of congestion index of the whole net works in the four period:
-    1: festival travel demand is too big for road capacity
-    2: 虎门大桥的作用
-TODO:
-    1.受影响的出行
-"""
-def draw_curves_ci(df, holiday=True, group_cols=['OD'], sample=.1):
-    df_ = df.copy()
-    if holiday is not None:
-        df_.query(f"dayofweek >=5 or holiday" if holiday else "dayofweek < 5 and not holiday", inplace=True)
-    
-    # df_speed = df_.groupby(group_cols)['speed'].mean().reset_index().dropna()
-    df_speed = df_.merge(df_.groupby(['OD'])[['speed']].max().rename(columns={'speed': 'speed_max'}), on = "OD")
-    
-    df_speed.loc[:, 'ci'] = df_speed.speed_max / df_speed.speed
-    # TODO 测试周五下午的情况
-    df_speed.loc[:, 'holiday/weekend'] = (df_speed.holiday) | (df_speed.dayofweek >= 5)
-    
-    fig = plt.figure(figsize=(8, 16))
-    ax = plt.subplot(3,1,1)    
-    # http://seaborn.pydata.org/generated/seaborn.lineplot.html, confidence intervals
-    sns.lineplot(x='t', y='ci', hue='period', style='holiday/weekend', data=df_speed, ax=ax  )
-    ax.set_xlim(0, 24)
-    ax.set_ylim(1, 1.6)
-    ax.set_xticks(range(0, 28, 4))
-    ax.set_title(f"all, group_cols: {group_cols}")
-    
-    ax = plt.subplot(3,1,2)    
-    sns.lineplot(x='t', y='ci', hue='period', data=df_speed[~df_speed['holiday/weekend']], ax=ax  )
-    ax.set_xlim(0, 24)
-    ax.set_ylim(1, 1.6)
-    ax.set_xticks(range(0, 28, 4))
-    ax.set_title(f"weekdays, group_cols: {group_cols}")
-    
-    ax = plt.subplot(3,1,3)    
-    sns.lineplot(x='t', y='ci', hue='period', dashes=False, data=df_speed[df_speed['holiday/weekend']], ax=ax  )
-    ax.set_xlim(0, 24)
-    ax.set_ylim(1, 1.6)
-    ax.set_xticks(range(0, 28, 4))
-    ax.set_title(f"holiday/weekend, group_cols: {group_cols}")
-   
-    plt.tight_layout(h_pad=.5)
-    
-    return fig
-
-# _ = draw_curves_ci(df, holiday=None,  group_cols=['OD'])
-_ = draw_curves_ci(df_equal_weight, holiday=None,  group_cols=['OD'])
-
-
-#%%
-
-def draw_heapmap_4_period(df, key='travelDis', time_period=None, aggfunc=np.average):
-    # key = 'travelDis' # speed
-    matrixs = {}
-    df_ = df.query( f"{time_period[0]} <= t < {time_period[1]}" ) if time_period is not None else df.copy()
-    for i in range(1, 5, 1):
-        matrixs[i] = pd.pivot_table(df_.query( f"period == {i}" ), values=key, aggfunc=aggfunc, fill_value=np.nan, index=['o'], columns='d')
-
-    base = matrixs[1].copy()
-    for i, mat in matrixs.items():
-        matrixs[i] = mat / base
-
-    fig = plt.figure(figsize=(16,16))
-    fig.suptitle(f"heapmap of {key} between {time_period}", fontsize=32)
-    for i in range(1, 5, 1):
-        plt.subplot(2,2,i)
-        sns.heatmap(matrixs[i], vmax=1.2, vmin=0.8, center=1, annot=True,linewidths=.5, cmap=sns.cm.rocket_r, fmt='.2f')
-        # sns.heatmap(matrixs[i], vmax=1.2, vmin=0.8, center=1, annot=True,linewidths=.5, cmap='rainbow', fmt='.2f')
-    plt.tight_layout()    
-    
-    return fig
-
-# for i in range(6, 20):
-#     draw_heapmap_4_period(df, 'travelDis', None, np.std)
-
-fig = draw_heapmap_4_period(df_equal_weight, 'speed', [16, 18], np.median)
-fig = draw_heapmap_4_period(df_equal_weight.query("holiday==True"), 'speed', [16, 18], np.median)
-fig = draw_heapmap_4_period(df_equal_weight.query("holiday==False"), 'speed', [16, 18], np.median)
-
-
-# %%
-key = 'speed' # speed
-matrixs = {}
-for i in range(1, 5, 1):
-    matrixs[i] = pd.pivot_table(df.query( f"period == {i} and 15 <= t < 17 " ), values=key, aggfunc=np.average, fill_value=np.nan, index=['o'], columns='d')
-
-base = matrixs[1].copy()
-for key, mat in matrixs.items():
-    matrixs[key] = mat / base
-
-plt.figure(figsize=(16,16))
-for i in range(1, 5, 1):
-    plt.subplot(2,2,i)
-    # sns.heatmap(matrixs[i], vmax=1.2, vmin=0.8, center=1, annot=True,linewidths=.5, cmap=sns.cm.rocket_r, fmt='.2f')
-    sns.heatmap(matrixs[i], vmax=1.2, vmin=0.8, center=1, annot=True,linewidths=.5, cmap='rainbow', fmt='.2f')
-
-# %%
-
-
-paths = df.groupby(['o', 'd']).apply(lambda x: np.delete(x.fid.unique(), -1) ).reset_index().rename(columns={0: 'fid_lst'})
-paths.loc[:, 'path_num'] = paths.fid_lst.apply(lambda x: len(x))
-
-plot_trip('Shenzhen', 'Zhuhai')
-
-# %%
-def get_trip_related_to_bridges(df):
-    tmp = df.groupby(['o', 'd', 'period','bridge'])[['OD']].count().reset_index()
-    tmp_sum = tmp.groupby(['o', 'd', 'period']).sum().reset_index().rename(columns={'OD': '_sum'})
-    tmp = tmp.merge(tmp_sum,  on=['o', 'd', 'period'] )   
-    tmp.loc[:, 'percentage'] = tmp.OD / tmp._sum
-
-    tmp = pd.pivot_table(tmp, values='percentage', aggfunc=np.mean, fill_value=np.nan, index=['o', 'd'], columns=['bridge','period']) 
-    
-    return tmp
-
-df_od_related_to_bridges = get_trip_related_to_bridges(df)
-
-# %%
-
-od_related_to_bridge = pd.DataFrame(df_od_related_to_bridges.index, columns=['OD'])
-od_related_to_bridge.loc[:, 'o'] = od_related_to_bridge.OD.apply(lambda x: x[0])
-od_related_to_bridge.loc[:, 'd'] = od_related_to_bridge.OD.apply(lambda x: x[1])
-df_related_to_bridges = df.merge(od_related_to_bridge[['o', 'd']], on=['o', 'd'])
-
-# %%
-df_equal_weight_2 = df_related_to_bridges.groupby(['o', 'd', 'time']).mean().dropna().reset_index()
-print( f"df_equal_weight size shrink {df.shape[0]}->{df_equal_weight.shape[0]}, cut down {(1-df_equal_weight.shape[0]/df.shape[0])*100:.2f}%" )
-df_equal_weight_2 = period_split(df_equal_weight_2)
-
-_ = draw_curves_ci(df_equal_weight_2, holiday=None,  group_cols=['OD'])
-
-# %%
-
-# pd.pivot_table(df, index=['date'], columns=['o'], values='speed', aggfunc=np.average)
-
-tmp = df.groupby(["date", "o"])[['speed']].mean().reset_index()
-tmp.date = tmp.date.astype(str)
-fig = plt.figure(figsize=(20,12))
-sns.lineplot(x='date', y='speed',  data=tmp)
-
-#%%
-
-
-# %%
-
-# 以星期为单元格，绘制情况
-
-data = df.query( "period==4" )
-print(data.dayofweek.unique())
-data.dayofweek = 'day '+data.dayofweek.astype(str)
-sns.lineplot( x='t', y='ci', hue='dayofweek', data=data )
-
-
-
-# %%
-def draw_speed_distribution_of_11_cities(df, key='ci', test=True):
-    dates = df.date.unique()
-    dates.sort()
-    if test:
-        dates = dates[:2]
-    
-    dist_cols, dist_rows = len(cities_lst), len(dates)
-    fig = plt.figure(figsize=(6*dist_cols, 4*dist_rows))
-
-    i = 0
-    for date_index, date in tqdm(enumerate(dates)):
-        for o in cities_lst:
-            data = df.query( f" date =={date} and o =='{o}' " )
-            ax = plt.subplot(dist_rows, dist_cols, i+1)
-            tag = data.holiday.unique()[0] or (data.dayofweek >=5).unique()[0]
-            if tag:
-                sns.lineplot( x='t', y=key, color='orange', data=data)
-            else:
-                sns.lineplot( x='t', y=key, data=data)
-                
-            _mean = data[key].mean()
-            ax.hlines(_mean, 0, 24, colors='gray', linestyles ='dotted', label=f"{_mean:.2f}, {data.speed.std():.2f}", )
-            ax.set_xlim(0, 24)
-            ax.set_xticks(range(0, 25, 6))
-            ax.set_xlabel(o)
-            ax.set_ylabel(str(date))
-            ax.legend()
-            i += 1
-
-    plt.tight_layout()
-    plt.show()
-    
-    return fig
-
-fig = draw_speed_distribution_of_11_cities(df, 'ci')
-
-# %%
-# 查看不同城市间的速度分布情况
-cities = ['Shenzhen', 'Hong Kong']
-data = df.query( f" date =={date} and o in {cities} " )
-sns.lineplot( x='t', y='speed', hue='o',data=data)
-
-
-
-#%%
-
-
-# %%
-import copy
-
-def dict_to_sql_sentence(con):
-    condition = copy.deepcopy(con)
-    for key, val in condition.items():
-        if isinstance(val, str):
-            condition[key] = f"'{val}'"
-    
-    sql = " and ".join( [ f"{key} == { val if isinstance(val, str) else val }"  for key, val in condition.items()])
-    
-    return sql    
-
-def draw_lines(df, df_all, key = 'speed', sql=None, *args, **kwargs):
-    data = df.query(sql) if sql is not None else df.copy()
-    flag = False
-    
-    if data.shape[0] == 0:
-        data = df_all.query(sql) if sql is not None else df.copy()
-        kwargs['alpha'] = .08
-        flag = True
-        
-    ax = sns.lineplot(x='t', y=key, data=data, *args, **kwargs)
-    ax.set_xlim(0, 24)
-    ax.set_xticks(range(0, 25, 6))
-    if flag:
-        ax.set_alpha(.5)
-        
-    return ax
-
-def draw_gba_intercities_index(df, df_all, holiday_or_weekend, key='ci', test=False, verbose=False, *args, **kwargs):
     dist_cols = dist_rows = len(cities_lst)
-
-    fig = plt.figure(figsize=(6*dist_cols, 4*dist_rows))
+    fig = plt.figure(figsize=(2.5*dist_cols, 2*dist_rows))
     for i, o in tqdm(enumerate(cities_lst[3:4] if test else cities_lst)):
         for j, d in enumerate(cities_lst):
             if o == d:
                 continue
             
             ax = plt.subplot(dist_rows, dist_cols, i*dist_cols+j+1, )
-            con = {
-                'o': o,
-                'd': d,
-                '`holiday/weekend`': holiday_or_weekend
-            }
-            sql = dict_to_sql_sentence(con)
-            if verbose: print(sql)
-            ax = draw_lines(df, df_all, key, sql, hue='period')
-
-            if ax is None:
-                continue
+            data = df_query_by_od(df, o, d).merge(pois[['o', 'd', 'great_circle_dis']], on=['o', 'd'])
+            
+            data.loc[:, 'circuity_factor'] = data.travelDis/1000 / data.great_circle_dis
+            sns.boxplot(x='period', y='circuity_factor', data=data, ax=ax)
             ax.set_xlabel(f"{o}->{d}")
 
     plt.tight_layout()
-    plt.show()
+
+    if fn is not None:
+        fig.savefig(fn, dpi=300)
+    plt.close()
     
     return fig
 
-fig = draw_gba_intercities_index(df_related_to_bridges, df, holiday_or_weekend=True, test=True, verbose=True)
+
+def plot_dis_distribution_under_4_period(df, test = False, fn ='../result/4个时期的距离线型图.pdf'):
+    dist_cols = dist_rows = len(cities_lst)
+    fig = plt.figure(figsize=(2.5*dist_cols, 2*dist_rows))
+    
+    for i, o in tqdm(enumerate(cities_lst[3:4] if test else cities_lst)):
+        for j, d in enumerate(cities_lst):
+            if o == d:
+                continue
+            
+            ax = plt.subplot(dist_rows, dist_cols, i*dist_cols+j+1, )
+            data = df_query_by_od(df, o, d)
+            
+            data.travelDis = data.travelDis/1000
+            sns.boxplot(x='period', y='travelDis', data=data, ax=ax)
+            ax.set_xlabel(f"{o}->{d}")
+
+    plt.tight_layout()
+
+    if fn is not None:
+        fig.savefig(fn, dpi=300)
+    plt.close()
+    
+    return fig
+
+
+#%%
+"""global parameters"""
+
+cities_lst = ["Hong Kong","Macao","Guangzhou","Shenzhen","Zhuhai","Foshan","Huizhou","Dongguan","Zhongshan","Jiangmen","Zhaoqing"]
+
+df        = pd.read_hdf('/home/pcl/Data/GBA/gba_db_0522.h5')
+pois      = get_pois()
+
+gba_area  = gpd.read_file("../db/gba_boundary.geojson")
+bridges   = gpd.read_file("../db/bridges.geojson")
+
+# TODO: move to classes
+path_set  = PathSet(load=True, cache_folder='../cache', file_name='wkt_path')
+gdf_paths = path_set.convert_to_gdf()
+gdf_paths = gpd.sjoin(left_df=gdf_paths, right_df=bridges[['bridge', 'geometry']], op='intersects', how='left') 
+
+df = df.merge(gdf_paths[['fid', 'geometry', 'bridge']], on='fid', how='left')
+df = gpd.GeoDataFrame(df)
+
+df = df_pipline(df, [add_od, period_split, add_congestion_index])
+
+# df.loc[:, 'holiday_or_weekend'] = (df.holiday) | (df.dayofweek >= 5)
+
+# df, df_outliers = outlier_filter(df, group_cols = ['OD', 'date'])
+# df_equal_weight = df.groupby(['o', 'd', 'time']).mean().dropna().reset_index()
+# print( f"df_equal_weight size shrink {df.shape[0]}->{df_equal_weight.shape[0]}, cut down {(1-df_equal_weight.shape[0]/df.shape[0])*100:.2f}%" )
+# df_equal_weight = period_split(df_equal_weight)
+
+#%%
+"""绘制四个时期的出行路径情况"""
+
+# test single trip
+i, j = 7, 9
+params = {'i':i, 'j':j, 'verbose':True, 'o': cities_lst[i],  'd': cities_lst[j], 'plot_config': { 'color':'r'},'bak_config': { 'edgecolor':'white', 'alpha':0.5} }
+
+res = draw_subplot_travel_path(params, df.query('period==4'))
+res['pic']
+
+# draw all figs
+def raw_subplot_travel_path_4_period(fn="../cache/path_figs_4_periods.pkl"):
+    res = {}
+    for period in range(1,5,1):
+        print(period)
+        axes, figs, fig = gba_plot(df=df.query(f"period == {period}"), 
+                            func=draw_subplot_travel_path, 
+                            plot_config={'color':'r'}, 
+                            bak_config= {'edgecolor':'white', 'alpha':0.5}, 
+                            n_jobs=32, 
+                            verbose=True, 
+                            fig_name=f"travel_path_period_{period}", 
+                            savefolder="./tmp", 
+                            focus_a=.4
+                            )
+        res[period] = figs
+    
+    pickle.dump(res, open(fn, 'wb'))
+    
+    return res
+
+# if __name__ == '__main__':
+    # res = raw_subplot_travel_path_4_period()
+
+# load data
+
+#%%
+"""以城市为单位，重新组织位置，便于分析"""
+def trip_path_distribution(i, focus=True, focus_a=.4):
+    dist_cols, dist_rows = 5, 11
+    fig = plt.figure(figsize=(4*dist_cols, 3*dist_rows))
+    for j in tqdm(range(len(cities_lst)), cities_lst[i]):
+        if i ==j: 
+            continue
+        for p in range(1, 6, 1):
+            alpha = 1 if (focus and 'bridge' in df.columns and df_query_by_od(df, i, j).query(f"period =={p}").bridge.dropna().nunique() > 0) else focus_a
+
+            ax= plt.subplot(dist_rows, dist_cols, j*dist_cols+p)
+            if p < 5:
+                ax.imshow(paths_figs[p][(i, j)], alpha=alpha)
+                ax.set_axis_off()
+            else:
+                data = df_query_by_od(df, i, j).merge(pois[['o', 'd', 'great_circle_dis']], on=['o', 'd'])
+                data.loc[:, 'circuity_factor'] = data.travelDis / 1000 / data.great_circle_dis
+                sns.boxplot(x='period', y='circuity_factor', data=data, ax=ax)
+                ax.set_title(f"{cities_lst[i]}->{cities_lst[j]}")           
+
+    plt.tight_layout()
+    plt.close()
+
+    fig.savefig(os.path.join(RESULT_FOLDER, f"trip_path_distribution_{cities_lst[i]}.jpg"), dpi=300)
+
+    return fig
+    
+def trip_path_distribution_batch(focus = True, focus_a = .4):
+    for i in range(11):
+        trip_path_distribution(i)
+    
+    return
+
+if False:
+    paths_figs =  pickle.load( open("../cache/path_figs_4_periods.pkl", 'rb') )
+    pois = get_pois()
+    # fig = trip_path_distribution(3)
+    trip_path_distribution_batch()
+
+#%%
+"""绕行系数 & 行驶距离 线型图"""
+# _ = plot_circuity_factor_under_4_period(df, fn ='../result/boxplot_circuity_factor_under_4_periods.jpg')
+# _ = plot_dis_distribution_under_4_period(df, fn ='../result/boxplot_distance_under_4_period.jpg')
+
+
+#%%
+# df_od_related_to_bridges = get_trip_related_to_bridges(df)
+# df_od_related_to_bridges.to_excel("../result/bridge_usage_ratio.xlsx")
+# df_od_related_to_bridges
+
+
+#%%
+p = 4
+i = 3; j=4
+df_od = df_query_by_od(df, i, j).query(f"period =={p}")
+
+
+#%%
+# 数量热力图
+def split_linestring(line):
+    res = []
+    coords = line.coords[:]
+    for i in range(len(coords)-1):
+        res.append( (LineString([coords[i], coords[i+1]]).wkt, 1) )
+    
+    return res
+
+rdd = sc.parallelize(df_od.geometry.dropna().values, 32)
+
+res = rdd.flatMap(lambda line: split_linestring(line))\
+         .map(lambda x: (x, 1))\
+         .reduceByKey(lambda x,y: x+y)\
+         .map(lambda x: (x[0][0], x[1]))\
+         .collect()
+
+
+heat_trips = gpd.GeoDataFrame(res, columns=['geometry', 'count'])
+heat_trips.geometry = heat_trips.geometry.apply(lambda x: wkt.loads(x))
+
+heat_trips.plot(column='count', legend=True)
+
+# %%
+# 比例热力图
+def split_linestring(item):
+    key, line = item
+    res = []
+    coords = line.coords[:]
+    for i in range(len(coords)-1):
+        res.append( (key, LineString([coords[i], coords[i+1]]).wkt) )
+    
+    return res
+
+rdd = sc.parallelize(df_od[['OD', 'geometry' ]].dropna().values)
+rdd1 = rdd.flatMap(split_linestring).map(lambda x: (x, 1)).reduceByKey(lambda x, y: x+y).cache()
+
+trip_od_nums = rdd1.map(lambda x: (x[0][0], x[1])).reduceByKey(lambda x, y: max(x, y)).collect()
+trip_od_nums = { key: val for key, val in trip_od_nums }
+
+rdd2 = rdd1.map(lambda x: (x[0][1], x[1]/trip_od_nums[x[0][0]]))\
+           .groupByKey().mapValues(list)\
+           .map(lambda x: (x[0], np.mean(x[1])))\
+           .sortBy(lambda x: x[1])\
+           .cache()
+
+heat_trips_res = rdd2.collect()
+
+heat_trips_1 = gpd.GeoDataFrame(heat_trips_res, columns=['_wkt', 'freq'])
+heat_trips_1.loc[:, 'geometry'] = heat_trips_1._wkt.apply(wkt.loads)
+heat_trips_1.reset_index(inplace=True)
+heat_trips_1.plot(column='freq', legend=True)
+
+heat_trips_1.to_file("./tmp/heat_trips_shenzhen_zhuhai_test_4.geojson", driver="GeoJSON")
+
+
+#%%
+#! drop almost equal lines
+import datetime
+
+def find_almost_equals_sindex(lines, item, decimal=4):
+    inds = np.setdiff1d( 
+                        lines.sindex.query(box(*item.geometry.bounds)),
+                        [item.name]
+    )   
+    candidates = lines.loc[inds]
+    idx = candidates[candidates.geometry.apply(lambda x: x.almost_equals(item.geometry, decimal))].index
+
+    return list(idx) if len(idx) > 0 else None
+
+s = datetime.datetime.now()
+lines = heat_trips_1.copy()
+item = lines.loc[0]
+res = find_almost_equals_sindex(lines, item)
+print(datetime.datetime.now() -s)
+
+
+# res = lines.apply( lambda x: find_almost_equals_sindex(lines, x), axis=1 )
+# res = lines.apply( lambda x: find_almost_equals(lines, x), axis=1 )
+# res
+
+#%%
+
+def find_almost_equals_wkt_version(lines, _wkt, decimal=4):
+    geom = wkt.loads(_wkt)
+    candidates = lines.loc[lines.sindex.query(box(*geom.bounds))]
+    idx = candidates[candidates.geometry.apply(lambda x: x.almost_equals(geom, decimal))].index
+
+    return list(np.sort(idx)) if len(idx) > 1 else None
+
+a = find_almost_equals_wkt_version(lines, 'LINESTRING (113.501821 22.4997, 113.502779 22.497385)')
+b = find_almost_equals_wkt_version(lines, 'LINESTRING (113.501816 22.499699, 113.502781 22.497387)')
+
+print(a, b)
+
+# %%
+
+res = rdd2.map(lambda x: (x[0], find_almost_equals_wkt_version(lines, x[0]), x[1])).collect()
+df2 = pd.DataFrame(res, columns=['_wkt', 'almost_equal', 'freq'])
+df2[~df2.almost_equal.isna()]
+df2.loc[:, 'geometry'] = df2._wkt.apply(wkt.loads)
+df2 = gpd.GeoDataFrame(df2)
+
+# %%
+def mergeValue(df2, lst):
+    if lst is None:
+        return None
+    
+    res = df2.loc[lst].freq.sum()
+
+    return res
+
+df2.loc[:, 'freq_sum'] = df2.almost_equal.apply(lambda x: mergeValue(df2, x))
 
 
 
 # %%
 
-o='Shenzhen'; d = 'Zhongshan'
-con = {
-    'o': o,
-    'd': d,
-    '`holiday/weekend`': False
-}
 
-sql = dict_to_sql_sentence(con)
-fig = plt.figure()
-ax = draw_lines(df_related_to_bridges, df, 'ci', sql, hue='period', alpha=.4)
-ax.set_xticks(range(0,25,6),alpha=.4)
-# ax.set_ylabel(alpha=.4)
+df2.loc[:, 'check'] = df2.almost_equal.apply(lambda x: True if x is None else False)
+
+# %%
+from collections import deque
+from utils.graph_helper import Digraph, plot_heat_map, combine_almost_equal_edges, add_points
 
 
+def combine_almost_equal_edges(data, verbose=True):
+    from copy import deepcopy
+    df = deepcopy(data)
+    if 'check' not in df.columns:
+        df.loc[:, 'check'] = False
+    
+    df = add_points(df)
+    
+    df.loc[:, 'almost_equal_num'] = df.almost_equal.apply(lambda x: 0 if x is None else len(x))
+    print(df.head(5))
+    df.sort_values('freq', ascending=False, inplace=True)
+
+    graph = Digraph(df[['start', 'end']].values)
+    graph_bak = Digraph()
+
+    queue = deque([df[~df.check].iloc[0].name])
+    visited, line_map = set(), {}
+    prev_size = df.shape[0]
+
+    while True:
+        while queue:
+            # print(f"{queue}, visited: {len(visited)}")
+            node = queue.popleft()
+            if node in visited:
+                continue
+            
+            lst = df.loc[node].almost_equal
+            try:
+                _sum = df.loc[lst].freq.sum()
+            except:
+                print( "node: ", node, " lst: ", lst)
+            
+            if _sum > 1:
+                df.loc[lst, "check"] = True
+                continue
+
+            df.loc[node, "freq"] = _sum
+            df.loc[node, "check"] = True
+            another_id = [x for x in lst if x != node][0]
+
+            line_map[df.loc[another_id]._wkt] = df.loc[node]._wkt
+
+            remove_edge = (df.loc[another_id].start, df.loc[another_id].end)
+            graph.remove_edge(*remove_edge)
+            graph_bak.add_edge(*remove_edge)
+
+            for i in lst:
+                visited.add(i)
+
+            df.drop(index=another_id, inplace=True)
+
+            nxt_start, nxt_end = df.loc[node, ['end', 'start']]
+            nxts = df.query(f"(start == @nxt_start or end == @nxt_end) and almost_equal_num == 2 ").index
+            for nxt in nxts:
+                if nxt in visited:
+                    continue
+                if nxt == 6871:
+                    print(df.query(f"(start == @nxt_start or end == @nxt_end) and almost_equal_num == 2 "))
+                queue.append(nxt)
+
+        if verbose: print(f'check total number: {df[df.check].shape[0]}, remain {df[~df.check].shape[0]}')
+        if prev_size == df[~df.check].shape[0]:
+            break
+        
+        prev_size = df[~df.check].shape[0]
+        queue.append(df[~df.check].iloc[0].name)
+
+    return df
+
+
+
+df3 = combine_almost_equal_edges(df2)
+
+df3.to_file("./tmp/heat_trips_shenzhen_zhuhai_combine_p4.geojson", driver="GeoJSON")
+
+# %%
+import matplotlib.pyplot as plt
+
+def plot_heat_map(df, *args, **kwargs):
+    ax = df.sort_values(by='freq', ascending=False).plot(column='freq', legend=True, *args, **kwargs)
+    
+    return ax
+
+plot_heat_map(df3, cmap='Reds')
 # %%

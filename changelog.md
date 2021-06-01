@@ -39,7 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plt.show()
   ```
 
-- [ ]
+## [1.0.02] - 2020-06-01
+
+### Added
+
+- 线路热力图
+- spark 参与计算，提升速度
 
 ## [1.0.01] - 2021-04-18
 
