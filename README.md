@@ -44,17 +44,14 @@ transportation analysis for GBA
 
 特殊日期：2019年4月5号~7号，清明假期
 
-
 - 原来JCP文章的数据 (8+5=12天)
   
     e:\Data\GBA\GBA_trajectory_info_190322.csv
     e:\Data\GBA\GBA_trajectory_info_190323.csv
     e:\Data\GBA\GBA_trajectory_info_190324.csv
     e:\Data\GBA\GBA_trajectory_info_190325.csv
-    e:\Data\GBA\GBA_trajectory_info_190326.csv
     e:\Data\GBA\GBA_trajectory_info_190327.csv
     e:\Data\GBA\GBA_trajectory_info_190328.csv
-    e:\Data\GBA\GBA_trajectory_info_190329.csv
     f:\6_数据\GBA\gba_0326.zip
     f:\6_数据\GBA\gba_0329.zip
     f:\6_数据\GBA\gba_0330.zip
@@ -108,3 +105,15 @@ transportation analysis for GBA
     z:\Data\GBA\output\GBA_step_200601.csv
     z:\Data\GBA\output\GBA_step_200602.csv
     z:\Data\GBA\output\GBA_step_200603.csv
+
+## 相关报道
+
+[南沙大桥今天正式通车！双向八车道 设计车速100公里/小时！](https://baijiahao.baidu.com/s?id=1629698920228371979&wfr=spider&for=pc)
+
+### 粤港澳大湾区发展规划纲要
+
+To build a rapid transport network in the Greater Bay Area.
+
+`To focus on connecting the Mainland with Hong Kong and Macao, as well as connecting the east and west banks of the Pearl River Estuary, build a rapid inter-city transport network mainly involving high-speed rails, inter-city railway links and high-grade motorways, and strive for reducing travelling time among major cities within the Greater Bay Area to one hour or less.` To draw up a development plan for inter-city railway links in the Greater Bay Area, improve the backbone railway networks of the Greater Bay Area, speed up the construction of inter-city railways, and progressively plan urban railway transit projects in major cities of the PRD. `To accelerate the construction of the Shenzhen-Zhongshan Bridge and the Second Humen Bridge crossriver link`. To adopt new models for clearance procedures with a view to making better use of the Guangzhou-Shenzhen-Hong Kong Express Rail Link and the Hong Kong-Zhuhai-Macao Bridge. To take forward the planning and construction of new boundary crossings such as the Liantang/Heung Yuen Wai Boundary Control Point, the new Guangdong-Macao border access (Qingmao Boundary Control Point), Hengqin Port (exploring the relocation of the Cotai Frontier Port of Macao) and West Kowloon Station of the Guangzhou-Shenzhen-Hong Kong Express Rail Link.
+To strengthen Hong Kong’s and Macao’s transport connections with the Mainland, pursue the effective connection of various modes of transport including urban railway transit, develop a safe and efficient interchange system, enhance the handling capacity and clearance facilitation of control points in Guangdong, Hong Kong and Macao, and promote an efficient and convenient flow of people and goods.
+

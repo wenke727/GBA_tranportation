@@ -42,7 +42,24 @@ def get_pois(fn="../db/cities_poi.xlsx"):
     return pois
 
 
+
+
 """shp parser releted func"""
+def save_to_geojson(gdf, fn, list_columns=[]):
+    if not isinstance(gdf, gpd.GeoDataFrame):
+        print('Check the format of the gdf.')
+        return False
+    
+    from copy import deepcopy
+    gdf_ = deepcopy(gdf)
+    for col in list_columns:
+        gdf_.loc[:, col] = gdf[col].astype(str)
+        
+    gdf_.to_file(fn if '.geojson' in fn else f"{fn}.geojson", driver='GeoJSON')
+    return True
+
+
+
 def add_od(df, fn="../db/cities_poi.xlsx"):
     df.loc[:, "OD"] = df.tripID.astype(np.int) % 1000
     pois = pd.read_excel(fn, 'poi').rename(columns={'id': 'OD'})

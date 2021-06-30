@@ -1,6 +1,5 @@
 from pyspark import SparkContext, SparkConf
 from pyspark.sql import SparkSession
-from tqdm import tqdm
 
 # Ref: https://blog.csdn.net/a5685263/article/details/102265838
 conf = SparkConf().set("spark.executor.memory", "64g").set("spark.executor.cores", "16")

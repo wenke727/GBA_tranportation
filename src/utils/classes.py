@@ -145,6 +145,15 @@ class PathSet():
     def size(self):
         return len(self.key_to_elem)
 
+    def get_shapes_with_bridges_info(self, bridges_fn="../db/bridges.geojson"):
+        gdf_paths = self.convert_to_gdf()
+        bridges = gpd.read_file(bridges_fn)
+        
+        gdf_paths = gpd.sjoin(left_df=gdf_paths, right_df=bridges[['bridge', 'geometry']], op='intersects', how='left') 
+        
+        return gdf_paths
+
+
 #%%
 if __name__ == '__main__':
     paths = PathSet()

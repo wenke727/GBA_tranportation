@@ -120,10 +120,6 @@ def post_process(folder_ori = '/home/pcl/Data/GBA/db', folder = '/home/pcl/Data/
     df = pd.concat([df_visited, df_unvisited] )
     df.loc[:, "OD"] = df.loc[:, "OD"] % 1000
 
-    t_filter = [0.25,  0.75,  1.25,  1.75,  2.25,  2.75, 3.25,  3.75,  4.25,  4.75,  5.25,  5.75]
-    df.query(f't not in {t_filter}', inplace=True)
-
-
     df.loc[:, "time"] = df.apply(tranfer_time, axis=1)
     df.loc[:, "time"] = pd.to_datetime( df.loc[:, "time"] )
 

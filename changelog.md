@@ -7,15 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-- [ ] Period 1~2: lacking the `step` and `tmcs` shapfile
-  How to extract traffic condition information from `GBA_step_190322.csv`
-
-  ```
-  tripID,instruction,orientation,road,distance,tolls,toll_distance,toll_road,duration,action,assistant_action
-  220000001,向东北行驶768米右转,东北, ,768,0,0,[],71,右转,[]
-  220000001,沿启成街途径启华街向东行驶227米右转,东,启成街,227,0,0,[],66,右转,[]
-  220000001,沿宏光道向南行驶116米向左前方行驶进入左转专用道,南,宏光道,116,0,0,[],28,向左前方行驶,进入左转专用道
-  ```
+- [x] Period 1~2: lacking the `step` and `tmcs` shapfile
 
 - [ ] 计算不同城市之间的距离变化情况
 - [ ] 绘制kde变化叠加图
@@ -38,6 +30,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
       i+=1
   plt.show()
   ```
+
+## [1.0.03] - 2020-06-30
+
+### Added
+
+- Extract bridge congestion index from `step` csv or shapefile with Spark.
 
 ## [1.0.02] - 2020-06-01
 
