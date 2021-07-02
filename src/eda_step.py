@@ -10,7 +10,6 @@ from spark_helper import spark
 from pyspark.sql.types import StringType, IntegerType
 import pyspark.sql.functions as F
 
-from utils.tools import reduce_mem_usage
 from utils.classes import PathSet
 from df_helper import save_to_geojson, df_pipline
 
@@ -21,49 +20,6 @@ fids_bridge = gdf_shps[~gdf_shps.bridge.isnull()].fid.unique()
 
 
 #%%
-""" load shp data """
-def read_data(fn, csv_folder='/home/pcl/Data/GBA/db/step', verbose=False):
-    if verbose: 
-        print(f'read_data {fn}, {os.getpid()} .')
-    
-    store = pd.HDFStore(fn)
-    data = store.select('step')
-        
-    # 某些字符无法解码为utf-8的编码格式, Ref: https://blog.csdn.net/Hayreen/article/details/79958341?utm_medium=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-3.baidujs&depth_1-utm_source=distribute.pc_relevant.none-task-blog-2%7Edefault%7EBlogCommendFromMachineLearnPai2%7Edefault-3.baidujs
-    data.loc[:, 'road'] = data.road.str.encode('UTF-8','ignore').str.decode('UTF-8')
-    
-    df = pd.read_csv( os.path.join( csv_folder, f"GBA_step_{fn.split('/')[-1][2:8]}.csv" ) )
-    data = data.merge(df[ [ x for x in df.columns if x not in data.columns] ], left_on='id', right_index=True)
-    
-    if verbose: 
-        print(f'\tread_data {fn} done.')
-    
-    return data
-
-
-def read_data_batch(folder='/home/pcl/Data/GBA/steps', csv_folder='/home/pcl/Data/GBA/db/step', n_jobs=32, filter=None):
-    from multiprocessing import Pool
-    s = datetime.datetime.now()
-
-    fns = [os.path.join(folder, f) for f in os.listdir(folder)]
-    fns.sort()
-
-    pools = Pool(n_jobs)
-    data  = pools.map_async(read_data, fns).get()
-    pools.close()
-    pools.join()
-
-    print(f"load data done, {datetime.datetime.now() -s}")
-    data = pd.concat(data)
-    
-    atts = ['date', 'ID', 'tripID']
-    data[atts] = data[atts].astype(np.int)
-    data = reduce_mem_usage(data, True)
-    
-    print("read_data_batch cost: ", datetime.datetime.now() -s)
-    data.to_csv("/home/pcl/Data/GBA/steps_all.csv", index=False)
-    
-    return data
 
 
 """ preprocess csv data """
@@ -112,51 +68,6 @@ def convert_2_dateFormat(df, dateFormat="yyyyMMdd"):
     return df.withColumn( 'date', F.to_date( F.col('date').cast(StringType()), dateFormat) )
 
 
-def parser_tripID_info(df, verbose=True, dateFormat = "yyyyMMdd"):
-
-    df = df.withColumnRenamed('tripID', 'OD').withColumnRenamed('ID2', 'tripID')
-    df = df.withColumn('tripID', df.tripID.cast(StringType()))
-
-    # `steps_all.csv`， ID = date(1/2) + time(4) + OD(1/2/3) + stepID(1/2)
-    df = df.withColumn('day_num', F.length((df.date%100).cast(StringType())))
-    df = df.withColumn('OD_num',  F.length(df.OD))
-    df = convert_2_dateFormat(df, dateFormat)
-
-    df = df.withColumn('t', df.tripID.substr(df.day_num+1, F.lit(4)))
-    df = df.withColumn('timestamp', F.to_timestamp( F.concat( F.col('date').cast(StringType()), F.lit(' '), df.t) , 'yyyy-MM-dd HHmm' ))
-    
-    df = df.withColumn('t', df.t.substr(1, 2).cast(IntegerType()) + df.t.substr(3, 2).cast(IntegerType())/60)
-    df = df.withColumn('stepID', df.tripID.substr(df.day_num + df.OD_num + 5, F.length(df.tripID)).cast(IntegerType()))
-    
-    df = df.drop('OD_num', 'day_num')
-
-    # df.select('date').distinct().show()
-    if verbose: df.show()
-
-    return df
-
-
-def split_period(df, 
-                 period_bins = ['2019-03-02 12:00:00', '2019-04-02 11:50:00', '2020-05-05 13:50:00', '2020-05-15 08:50:00', '2021-12-30 09:00:00'], 
-                 verbose=False):
-    """
-    split period accoding to the timestamp
-    """
-    view_name = 'split_period_df'
-    df.createOrReplaceTempView(view_name)
-    
-    sql = f"""
-        SELECT *, 
-            (case when '{period_bins[0]}' < timestamp and timestamp <= '{period_bins[1]}' then 1
-                  when '{period_bins[1]}' < timestamp and timestamp <= '{period_bins[2]}' then 2
-                  when '{period_bins[2]}' < timestamp and timestamp <= '{period_bins[3]}' then 3
-                  when '{period_bins[3]}' < timestamp and timestamp <= '{period_bins[4]}' then 4
-                  else -1 end) as period
-        FROM {view_name}
-    """
-    if verbose: print(sql)
-    
-    return spark.sql(sql)
 
 
 def check_dataframe():
