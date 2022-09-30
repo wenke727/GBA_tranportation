@@ -11,7 +11,6 @@ import matplotlib.pyplot as plt
 from functools import partial
 
 from tqdm import tqdm
-from joblib import Parallel, delayed
 from shapely import wkt
 from shapely.geometry import LineString
 from multiprocessing import Pool, Lock

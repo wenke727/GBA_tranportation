@@ -10,9 +10,8 @@ from tqdm import tqdm
 from utils.classes import PathSet
 import threading
 import time
-from joblib import Parallel, delayed
 from shapely.geometry import LineString
-from utils.tools import reduce_mem_usage
+from utils.df_helper import reduce_mem_usage
 
 import warnings
 warnings.filterwarnings('ignore')

@@ -48,7 +48,7 @@ class PathSet():
         
         return
 
-    def addSet_df(self, lst, verbose=False):
+    def addSet_df(self, lst, auto_save=True, verbose=False):
         import geopandas as gpd
         paths = gpd.GeoDataFrame(geometry = lst)
         
@@ -60,6 +60,7 @@ class PathSet():
         paths_dict = paths.to_dict(orient='records')
 
         res = {}
+        prev_sum = self.num
         for item in paths_dict:
             if item['_wkt'] in self.path_to_key:
                 res[item['_wkt']] = self.path_to_key[item['_wkt']]
@@ -71,6 +72,9 @@ class PathSet():
             if verbose:
                 print(f"add {item['_wkt']} to db")
             res[item['_wkt']] = self.path_to_key[item['_wkt']]
+        
+        if auto_save and self.num > prev_sum:
+            self.save()
         
         return res
     

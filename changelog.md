@@ -31,6 +31,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   plt.show()
   ```
 
+## [1.0.04] - 2020-06-30
+
+### Added
+
+- `trip_crawler` to crawl data from the map provider.
+- `data_process_step_spark` reorgnize, and move some funs from eda_step
+
 ## [1.0.03] - 2020-06-30
 
 ### Added

@@ -8,6 +8,7 @@ __pycache__/
 
 # Distribution / packaging
 .bak
+spark-warehouse
 cache
 tmp
 log/

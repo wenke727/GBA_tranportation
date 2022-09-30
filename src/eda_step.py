@@ -12,12 +12,18 @@ import pyspark.sql.functions as F
 
 from utils.classes import PathSet
 from df_helper import save_to_geojson, df_pipline
+from df_spark_helper import parser_tripID_info, split_period, convert_2_dateFormat
 
-
+# data initial
 path_set = PathSet(cache_folder='../cache', file_name='wkt_step')
 gdf_shps = path_set.get_shapes_with_bridges_info()
 fids_bridge = gdf_shps[~gdf_shps.bridge.isnull()].fid.unique()
 
+
+fig_title_font = {'family' : 'Times New Roman',
+        'weight' : 'normal',
+        'size' : 12,
+}
 
 #%%
 
@@ -64,14 +70,10 @@ def add_date_batch(folder='/home/pcl/Data/GBA/db/step', n_jobs=56):
 #%%
 """ pyspark funcs """
 
-def convert_2_dateFormat(df, dateFormat="yyyyMMdd"):
-    return df.withColumn( 'date', F.to_date( F.col('date').cast(StringType()), dateFormat) )
-
-
-
-
 def check_dataframe():
-    print('Top 10')
+    """Check df
+    """
+    print('stepID Top 10')
     spark.sql(" select * from step order by stepID desc limit 10 ").show()
     
     print('time distribution')
@@ -88,7 +90,8 @@ def check_dataframe():
 
 
 def check_num_dist():
-    # 对比分析可得，两者的记录是相符合的, 除了 2020-05-23
+    """对比分析shp and csv folder 可得，两者的记录是相符合的, 除了 2020-05-23
+    """
     a = spark.sql('select date, count(tripID) as count from step group by date order by date').toPandas()
     b = spark.sql('select date, count(tripID) as count from csv group by date order by date').toPandas()
     c = b.merge(a, on='date', how='left')
@@ -112,7 +115,7 @@ def check_tripID_dist(df_2):
     steps = df_2.filter(F.col('date') >= '2020-05-01')\
                 .withColumn('tripID_num', F.length(df_2.tripID.cast(StringType())) )
     steps.groupBy(steps.date, steps.tripID_num).count().sort(steps.date).show()
-    
+
 
 def read_and_tranform_data():
     """read origin csv data and save them in the parquet format
@@ -120,7 +123,7 @@ def read_and_tranform_data():
     Returns:
         [Boolean]: If success, return True
     """
-    # 读取初始数据，然后写出到parquet格式
+    # 读取初始数据，然后写出到parquet格式, 
     df_1 = spark.read.format('csv').load("/home/pcl/Data/GBA/steps_all.csv", header=True, inferSchema=True,dateFormat="yyyyMMdd")
     df_1 = parser_tripID_info(df_1)
     df_1 = split_period(df_1)
@@ -183,7 +186,9 @@ def selct_data_by_date(date_ = '2020-05-18'):
 
 #%%
 # TODO 空值的处理， road里边的null为空值
-df = spark.read.format('parquet').load('/home/pcl/Data/GBA/db/spark/steps_shp.parquet')
+
+df = spark.read.format('parquet').load('/home/pcl/Data/GBA/db/spark/steps_p3_p4.parquet')
+# df = spark.read.format('parquet').load('/home/pcl/Data/GBA/db/spark/steps_shp.parquet')
 df.createOrReplaceTempView('step')
 
 df_csv = spark.read.format('parquet').load('/home/pcl/Data/GBA/db/spark/steps_csv.parquet')
@@ -318,6 +323,8 @@ data_bridge = special_time_filter(data_bridge)
 
 #%%
 # ! 绘制拥堵指数分布曲线
+
+
 def add_ticks_day(x0, x1, ax,step_time=np.timedelta64(1,'D'), label_step=2 ):
 
     ticks = []
@@ -380,8 +387,8 @@ def draw_congestion_index_by_date_p1(data_bridge, plot_params, y_max=4.2, ax=Non
     add_ticks_day(x0, x1, ax)
     ax.legend()
     
-    ax.set_xlabel('a) Average daily congestion index by date in period 1 and 2', font2)
-    ax.set_ylabel("Congestion Index", font2)
+    ax.set_xlabel('a) Average daily congestion index by date in period 1 and 2', fig_title_font)
+    ax.set_ylabel("Congestion Index", fig_title_font)
 
     if save_fn:
         plt.savefig(save_fn, dpi=300)
@@ -415,8 +422,8 @@ def draw_congestion_index_by_date_p3(data_bridge, plot_params, y_max=4.2, ax=Non
     ax.legend()
     # plt.savefig('ci_dist_p3.jpg', dpi=300)
 
-    ax.set_xlabel('b) Average daily congestion index by date in period 3 and 4', font2)
-    ax.set_ylabel("Congestion Index", font2)
+    ax.set_xlabel('b) Average daily congestion index by date in period 3 and 4', fig_title_font)
+    ax.set_ylabel("Congestion Index", fig_title_font)
 
     
     return ax
@@ -440,32 +447,34 @@ def draw_congesion_index_dist(df, ax=None):
     sns.lineplot(data=data_bridge.query('period < 5'), x='t', y='ci', hue='bridge', style='period', size='period', hue_order=['Humen bridge', 'Nanshan bridge', "HZMB"],  sizes=[1.5, 1.5, 2, 0.5], ax=ax)
     ax.set_xlim(0, 24)
     ax.set_xticks(range(0, 28, 4))
-    ax.set_xlabel('c) Congestion index distribution of 4 periods', font2)
-    ax.set_ylabel('Congestion Index', font2)
+    ax.set_xlabel('c) Daily congestion index distribution in the 4 periods', fig_title_font)
+    ax.set_ylabel('Congestion Index', fig_title_font)
     ax.legend(loc='upper left')
 
     return data_bridge
 
 
-font2 = {'family' : 'Times New Roman',
-         'weight' : 'normal',
-         'size' : 12,
-}
+def congesion_index_fig(data_bridge, out_fn='../result/fig/fig_1_congestion_distribution.jpg'):
+    plot_params = {"x":'timestamp', 
+                    "y":'ci', 
+                    "hue":'bridge',
+                    "hue_order": ['Humen bridge', 'Nanshan bridge', "HZMB"],
+                    "zorder": 9,
+                    "alpha": .9
+                }
 
-plot_params = {"x":'timestamp', 
-               "y":'ci', 
-               "hue":'bridge',
-               "hue_order": ['Humen bridge', 'Nanshan bridge', "HZMB"],
-               "zorder": 9,
-               "alpha": .9
-               }
+    fig, ax = plt.subplots(3, figsize=(15, 4*3))
+    draw_congestion_index_by_date_p1(data_bridge, plot_params, ax=ax[0])
+    draw_congestion_index_by_date_p3(data_bridge, plot_params, ax=ax[1])
+    draw_congesion_index_dist(data_bridge, ax=ax[2])
 
-fig, ax = plt.subplots(3, figsize=(15, 4*3))
-draw_congestion_index_by_date_p1(data_bridge, plot_params, ax=ax[0])
-draw_congestion_index_by_date_p3(data_bridge, plot_params, ax=ax[1])
-draw_congesion_index_dist(data_bridge, ax=ax[2])
+    plt.tight_layout(h_pad=1.5)
+    
+    if out_fn is not None:
+        fig.savefig(out_fn, dpi=300, pad_inches=0, bbox_inches='tight')
 
-plt.tight_layout()
-fig.savefig('../result/fig/fig_1_congestion_distribution.jpg', dpi=300, pad_inches=0, bbox_inches='tight')
+    return fig
+
+congesion_index_fig(data_bridge)
 
 # %%
